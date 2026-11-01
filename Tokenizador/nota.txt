@@ -1,8 +1,0 @@
-mejoras:
--que tenga escaneo recusrivo
--que imprima tabla de atomos
--que imprima tabla de reglas
--que genere un arbol semantico, osea que haga un arbol y lo expanda
--identificar que ramas no se contradisen
--que halla un gitgub
--que tenga respaldo, osea que guarde lo que se le valla ingresando
