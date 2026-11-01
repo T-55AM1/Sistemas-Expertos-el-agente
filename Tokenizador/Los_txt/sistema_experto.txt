@@ -1,0 +1,326 @@
+import re
+
+class TokenizadorSistemasExpertos:
+    def __init__(self):
+        self.tabla_atomos = {}
+        self.letras_disponibles = ['p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z']
+        self.palabras_clave = {
+            'y': 'CONJ', 'pero': 'CONJ', 'e': 'CONJ',
+            'o': 'DISJ', 'u': 'DISJ',
+            'no': 'NEG',
+            'si': 'COND_SI', 'entonces': 'COND_ENTONCES',
+            'si y solo si': 'BICOND'
+        }
+
+    def limpiar_texto(self, texto):
+        texto = texto.lower().strip()
+        if texto.startswith("si ") and " entonces " not in texto and "," in texto:
+            texto = texto.replace(",", " entonces", 1)
+        texto = re.sub(r'[.;:]', '', texto)
+        texto = texto.replace(',', '')
+        texto = re.sub(r'\s+', ' ', texto)
+        return texto
+
+    def segmentar_palabras(self, texto):
+        texto = self.limpiar_texto(texto)
+        texto = re.sub(r'\bsi\s+y\s+solo\s+si\b', '##BICOND##', texto)
+        tokens_preliminares = texto.split()
+        tokens_finales = []
+        for t in tokens_preliminares:
+            if t == '##BICOND##':
+                tokens_finales.append('si y solo si')
+            else:
+                tokens_finales.append(t)
+        return tokens_finales
+
+    def registrar_atomos_de_base(self, lineas):
+        for linea in lineas:
+            palabras = self.segmentar_palabras(linea)
+            if not palabras:
+                continue
+            buffer_atomo = []
+            for palabra in palabras:
+                if palabra in self.palabras_clave:
+                    if buffer_atomo:
+                        self._guardar_atomo_puro(buffer_atomo)
+                        buffer_atomo = []
+                else:
+                    buffer_atomo.append(palabra)
+            if buffer_atomo:
+                self._guardar_atomo_puro(buffer_atomo)
+
+    def _guardar_atomo_puro(self, lista_palabras):
+        if lista_palabras and lista_palabras[0] == 'no' and len(lista_palabras) > 1:
+            texto_atomo = " ".join(lista_palabras[1:])
+        else:
+            texto_atomo = " ".join(lista_palabras)
+        if texto_atomo and texto_atomo not in self.tabla_atomos and self.letras_disponibles:
+            self.tabla_atomos[texto_atomo] = self.letras_disponibles.pop(0)
+
+    def buscar_letra_atomo(self, lista_palabras):
+        if not lista_palabras:
+            return ""
+        if lista_palabras[0] == 'no' and len(lista_palabras) > 1:
+            texto = " ".join(lista_palabras[1:])
+            es_negado = True
+        else:
+            texto = " ".join(lista_palabras)
+            es_negado = False
+        letra = self.tabla_atomos.get(texto, "")
+        if not letra:
+            return ""
+        return f"¬{letra}" if es_negado else letra
+
+    def traducir_oracion(self, linea_texto):
+        palabras = self.segmentar_palabras(linea_texto)
+        if not palabras:
+            return ""
+        es_condicional_estandar = (palabras[0] == 'si') if palabras else False
+        componentes_formula = []
+        buffer_atomo = []
+        i = 0
+        while i < len(palabras):
+            palabra = palabras[i]
+            if palabra in self.palabras_clave:
+                if buffer_atomo:
+                    letra = self.buscar_letra_atomo(buffer_atomo)
+                    if letra: componentes_formula.append(letra)
+                    buffer_atomo = []
+                tipo_conector = self.palabras_clave[palabra]
+                if tipo_conector == 'CONJ': componentes_formula.append('∧')
+                elif tipo_conector == 'DISJ': componentes_formula.append('∨')
+                elif tipo_conector == 'BICOND': componentes_formula.append('↔')
+                elif tipo_conector == 'COND_ENTONCES': componentes_formula.append('→')
+                elif tipo_conector == 'NEG': buffer_atomo.append(palabra)
+            else:
+                buffer_atomo.append(palabra)
+            i += 1
+
+        if buffer_atomo:
+            letra = self.buscar_letra_atomo(buffer_atomo)
+            if letra: componentes_formula.append(letra)
+        if componentes_formula and componentes_formula[0] == 'si':
+            componentes_formula.pop(0)
+
+        formula_final = "".join(componentes_formula)
+        if es_condicional_estandar and '→' in formula_final:
+            formula_final = f"({formula_final})"
+        return formula_final
+
+class AnalizadorFormulas:
+    def quitar_parentesis_externos(self, f):
+        while f.startswith('(') and f.endswith(')'):
+            balance = 0
+            completo = True
+            for idx, c in enumerate(f[:-1]):
+                if c == '(': balance += 1
+                elif c == ')': balance -= 1
+                if balance == 0 and idx > 0:
+                    completo = False
+                    break
+            if completo:
+                f = f[1:-1]
+            else:
+                break
+        return f
+
+    def encontrar_conector_principal(self, f):
+        f = self.quitar_parentesis_externos(f)
+        if len(f) == 1 and f.isalpha():
+            return 'ATOMO', f, None
+        if len(f) == 2 and f.startswith('¬') and f[1:].isalpha():
+            return 'ATOMO_NEGADO', f, None
+
+        conectores = ['↔', '→', '∨', '∧']
+        for conector in conectores:
+            balance = 0
+            for idx in range(len(f) - 1, -1, -1):
+                c = f[idx]
+                if c == ')': balance += 1
+                elif c == '(': balance -= 1
+                elif balance == 0 and c == conector:
+                    izq = f[:idx]
+                    der = f[idx+1:]
+                    tipo = ''
+                    if conector == '∧': tipo = 'CONJUNCION'
+                    elif conector == '∨': tipo = 'DISJUNCION'
+                    elif conector == '→': tipo = 'CONDICIONAL'
+                    elif conector == '↔': tipo = 'BICONDICIONAL'
+                    return tipo, izq, der
+
+        if f.startswith('¬'):
+            return 'NEGACION', f[1:], None
+        return 'ATOMO', f, None
+
+class NodoArbolSemantico:
+    def __init__(self, formulas, atomos_afirmados=None, atomos_negados=None):
+        self.formulas = list(formulas)
+        self.atomos_afirmados = set(atomos_afirmados) if atomos_afirmados else set()
+        self.atomos_negados = set(atomos_negados) if atomos_negados else set()
+        self.izquierdo = None
+        self.derecho = None
+        self.cerrada = False
+
+    def verificar_contradiccion(self):
+        interseccion = self.atomos_afirmados.intersection(self.atomos_negados)
+        if interseccion:
+            self.cerrada = True
+            return True
+        return False
+
+class MotorInferencia:
+    def __init__(self):
+        self.analizador = AnalizadorFormulas()
+        self.modelos_encontrados = []
+
+    def construir_arbol(self, nodo):
+        if nodo.verificar_contradiccion():
+            return nodo
+
+        formulas_restantes = []
+        for f in nodo.formulas:
+            tipo, izq, der = self.analizador.encontrar_conector_principal(f)
+            if tipo == 'ATOMO':
+                nodo.atomos_afirmados.add(izq)
+            elif tipo == 'ATOMO_NEGADO':
+                nodo.atomos_negados.add(izq[1:])
+            else:
+                formulas_restantes.append(f)
+
+        if nodo.verificar_contradiccion():
+            return nodo
+
+        if not formulas_restantes:
+            return nodo
+
+        formula_elegida = None
+        tipo_elegido = None
+        sub_izq, sub_der = None, None
+
+        for f in formulas_restantes:
+            tipo, izq, der = self.analizador.encontrar_conector_principal(f)
+            if tipo in ['CONJUNCION']:
+                formula_elegida = f
+                tipo_elegido = tipo
+                sub_izq, sub_der = izq, der
+                break
+            elif tipo == 'NEGACION':
+                tipo_interno, int_izq, int_der = self.analizador.encontrar_conector_principal(izq)
+                if tipo_interno in ['DISJUNCION', 'CONDICIONAL']:
+                    formula_elegida = f
+                    tipo_elegido = f"NEG_{tipo_interno}"
+                    sub_izq, sub_der = int_izq, int_der
+                    break
+
+        if not formula_elegida:
+            formula_elegida = formulas_restantes[0]
+            tipo_elegido, sub_izq, sub_der = self.analizador.encontrar_conector_principal(formula_elegida)
+
+        if tipo_elegido == 'NEGACION':
+            tipo_interno, int_izq, int_der = self.analizador.encontrar_conector_principal(sub_izq)
+            if tipo_interno in ['CONJUNCION', 'BICONDICIONAL']:
+                tipo_elegido = f"NEG_{tipo_interno}"
+                sub_izq, sub_der = int_izq, int_der
+
+        pendientes_siguientes = [f for f in formulas_restantes if f != formula_elegida]
+
+        if tipo_elegido == 'CONJUNCION':
+            pendientes_siguientes.extend([sub_izq, sub_der])
+            nodo.izquierdo = NodoArbolSemantico(pendientes_siguientes, nodo.atomos_afirmados, nodo.atomos_negados)
+            self.construir_arbol(nodo.izquierdo)
+        elif tipo_elegido == 'NEG_DISJUNCION':
+            pendientes_siguientes.extend([f"¬{sub_izq}", f"¬{sub_der}"])
+            nodo.izquierdo = NodoArbolSemantico(pendientes_siguientes, nodo.atomos_afirmados, nodo.atomos_negados)
+            self.construir_arbol(nodo.izquierdo)
+        elif tipo_elegido == 'NEG_CONDICIONAL':
+            pendientes_siguientes.extend([sub_izq, f"¬{sub_der}"])
+            nodo.izquierdo = NodoArbolSemantico(pendientes_siguientes, nodo.atomos_afirmados, nodo.atomos_negados)
+            self.construir_arbol(nodo.izquierdo)
+        elif tipo_elegido == 'NEGACION' and sub_izq.startswith('¬'):
+            pendientes_siguientes.append(sub_izq[1:])
+            nodo.izquierdo = NodoArbolSemantico(pendientes_siguientes, nodo.atomos_afirmados, nodo.atomos_negados)
+            self.construir_arbol(nodo.izquierdo)
+        elif tipo_elegido == 'DISJUNCION':
+            izq_formulas = pendientes_siguientes + [sub_izq]
+            der_formulas = pendientes_siguientes + [sub_der]
+            nodo.izquierdo = NodoArbolSemantico(izq_formulas, nodo.atomos_afirmados, nodo.atomos_negados)
+            nodo.derecho = NodoArbolSemantico(der_formulas, nodo.atomos_afirmados, nodo.atomos_negados)
+            self.construir_arbol(nodo.izquierdo)
+            self.construir_arbol(nodo.derecho)
+        elif tipo_elegido == 'CONDICIONAL':
+            izq_formulas = pendientes_siguientes + [f"¬{sub_izq}"]
+            der_formulas = pendientes_siguientes + [sub_der]
+            nodo.izquierdo = NodoArbolSemantico(izq_formulas, nodo.atomos_afirmados, nodo.atomos_negados)
+            nodo.derecho = NodoArbolSemantico(der_formulas, nodo.atomos_afirmados, nodo.atomos_negados)
+            self.construir_arbol(nodo.izquierdo)
+            self.construir_arbol(nodo.derecho)
+        elif tipo_elegido == 'BICONDICIONAL':
+            izq_formulas = pendientes_siguientes + [sub_izq, sub_der]
+            der_formulas = pendientes_siguientes + [f"¬{sub_izq}", f"¬{sub_der}"]
+            nodo.izquierdo = NodoArbolSemantico(izq_formulas, nodo.atomos_afirmados, nodo.atomos_negados)
+            nodo.derecho = NodoArbolSemantico(der_formulas, nodo.atomos_afirmados, nodo.atomos_negados)
+            self.construir_arbol(nodo.izquierdo)
+            self.construir_arbol(nodo.derecho)
+        elif tipo_elegido == 'NEG_CONJUNCION':
+            izq_formulas = pendientes_siguientes + [f"¬{sub_izq}"]
+            der_formulas = pendientes_siguientes + [f"¬{sub_der}"]
+            nodo.izquierdo = NodoArbolSemantico(izq_formulas, nodo.atomos_afirmados, nodo.atomos_negados)
+            nodo.derecho = NodoArbolSemantico(der_formulas, nodo.atomos_afirmados, nodo.atomos_negados)
+            self.construir_arbol(nodo.izquierdo)
+            self.construir_arbol(nodo.derecho)
+        elif tipo_elegido == 'NEG_BICONDICIONAL':
+            izq_formulas = pendientes_siguientes + [sub_izq, f"¬{sub_der}"]
+            der_formulas = pendientes_siguientes + [f"¬{sub_izq}", sub_der]
+            nodo.izquierdo = NodoArbolSemantico(izq_formulas, nodo.atomos_afirmados, nodo.atomos_negados)
+            nodo.derecho = NodoArbolSemantico(der_formulas, nodo.atomos_afirmados, nodo.atomos_negados)
+            self.construir_arbol(nodo.izquierdo)
+            self.construir_arbol(nodo.derecho)
+
+        if nodo.izquierdo and nodo.izquierdo.cerrada:
+            if not nodo.derecho or nodo.derecho.cerrada:
+                nodo.cerrada = True
+        return nodo
+
+    def recolectar_modelos(self, nodo):
+        if not nodo: return
+        if not nodo.izquierdo and not nodo.derecho:
+            if not nodo.cerrada:
+                modelo = {
+                    'afirmados': sorted(list(nodo.atomos_afirmados)),
+                    'negados': sorted(list(nodo.atomos_negados))
+                }
+                if modelo not in self.modelos_encontrados:
+                    self.modelos_encontrados.append(modelo)
+            return
+        self.recolectar_modelos(nodo.izquierdo)
+        self.recolectar_modelos(nodo.derecho)
+
+    def imprimir_reporte(self, nodo_raiz):
+        self.modelos_encontrados = []
+        self.recolectar_modelos(nodo_raiz)
+        print("\n=== REPORTE DE MODELOS (MUNDOS POSIBLES) ===")
+        if not self.modelos_encontrados:
+            print("ALERTAS DEL SISTEMA EXPERTO:")
+            print("❌ LA BASE DE CONOCIMIENTO ES INCONSISTENTE.")
+        else:
+            print(f"✅ LA BASE DE CONOCIMIENTO ES CONSISTENTE. Se encontraron {len(self.modelos_encontrados)} mundos posibles:\n")
+            for idx, mod in enumerate(self.modelos_encontrados, 1):
+                asignaciones = []
+                for a in mod['afirmados']: asignaciones.append(f"{a} = V")
+                for n in mod['negados']: asignaciones.append(f"{n} = F")
+                print(f"Mundo {idx}: [ {', '.join(asignaciones)} ]")
+
+if __name__ == "__main__":
+    print("=========================================================")
+    print("  SISTEMA EXPERTO INTEGRADO - MOTOR DE INFERENCIA V5.0")
+    print("=========================================================")
+    tokenizador = TokenizadorSistemasExpertos()
+    lineas_usuario = ["si es de dia entonces voy a trabajar", "si llueve entonces no voy a trabajar", "es de dia"]
+    tokenizador.registrar_atomos_de_base(lineas_usuario)
+    formulas_base = []
+    for linea in lineas_usuario:
+        formulas_base.append(tokenizador.traducir_oracion(linea))
+    motor = MotorInferencia()
+    nodo_raiz = NodoArbolSemantico(formulas_base)
+    motor.construir_arbol(nodo_raiz)
+    motor.imprimir_reporte(nodo_raiz)

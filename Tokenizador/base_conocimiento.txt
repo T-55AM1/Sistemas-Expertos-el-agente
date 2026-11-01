@@ -1,0 +1,2 @@
+R1: si es de dia y hace frio entonces llueve
+R2: hace frio

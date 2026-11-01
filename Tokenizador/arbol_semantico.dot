@@ -1,0 +1,10 @@
+digraph ArbolSemantico {
+  node [shape=box, fontname="Courier", fontsize=10];
+  1 [label="Pendientes:\n  (p∧q→r)\n  q\nEstado Actual:\n  [q=V]", color=black, penwidth=2];
+  1 -> 2 [label="Beta: → (Izq)"];
+  2 [label="Pendientes:\n  ¬p∧q\nEstado Actual:\n  [q=V]", color=black, penwidth=2];
+  2 -> 4 [label="Alfa: ∧"];
+  4 [label="Pendientes:\n  ¬p\n  q\nEstado Actual:\n  [q=V, p=F]\n✅ RAMA ABIERTA", color=green, penwidth=2];
+  1 -> 3 [label="Beta: → (Der)"];
+  3 [label="Pendientes:\n  r\nEstado Actual:\n  [q=V, r=V]\n✅ RAMA ABIERTA", color=green, penwidth=2];
+}
